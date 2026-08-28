@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Video Editor
+Comment=Multi-track non-linear video editor
+Exec=video-editor %U
+Icon=io.github.yojoe.VideoEditor
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=application/x-yaml;
+StartupWMClass=video-editor

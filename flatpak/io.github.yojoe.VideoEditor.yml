@@ -1,0 +1,60 @@
+# Flatpak manifest. Build with:  ./flatpak/build.sh
+#
+# The app is built outside the sandbox first (npm ci && electron-builder --dir)
+# and the resulting unpacked directory is copied in, so no network is needed
+# during flatpak-builder. The Electron base-app supplies zypak, which lets
+# Chromium's sandbox work inside bubblewrap.
+app-id: io.github.yojoe.VideoEditor
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '24.08'
+command: video-editor
+separate-locales: false
+
+finish-args:
+  # Display + GPU: WebGL preview compositing and VAAPI encode/decode.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Audio playback.
+  - --socket=pulseaudio
+  # Files are accessed through the xdg-desktop-portal file chooser (Electron's
+  # GTK dialogs go through the portal when GTK_USE_PORTAL=1), so no broad
+  # filesystem grant is required. `xdg-run/...` lets media:// stream portal
+  # documents. Users who drop files from a file manager still get real paths.
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-music
+  - --filesystem=xdg-pictures
+  - --filesystem=xdg-download
+  - --filesystem=xdg-documents
+  - --env=GTK_USE_PORTAL=1
+  - --env=ELECTRON_OZONE_PLATFORM_HINT=auto
+  - --talk-name=org.freedesktop.portal.FileChooser
+  - --talk-name=org.freedesktop.Notifications
+
+modules:
+  - name: video-editor
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/lib/video-editor /app/bin /app/share/applications /app/share/metainfo /app/share/icons/hicolor/512x512/apps
+      - cp -a linux-unpacked/. /app/lib/video-editor/
+      - install -Dm755 video-editor.sh /app/bin/video-editor
+      - install -Dm644 io.github.yojoe.VideoEditor.desktop /app/share/applications/io.github.yojoe.VideoEditor.desktop
+      - install -Dm644 io.github.yojoe.VideoEditor.metainfo.xml /app/share/metainfo/io.github.yojoe.VideoEditor.metainfo.xml
+      - install -Dm644 icon.png /app/share/icons/hicolor/512x512/apps/io.github.yojoe.VideoEditor.png
+    sources:
+      - type: dir
+        path: ../dist/linux-unpacked
+        dest: linux-unpacked
+      - type: file
+        path: video-editor.sh
+      - type: file
+        path: io.github.yojoe.VideoEditor.desktop
+      - type: file
+        path: io.github.yojoe.VideoEditor.metainfo.xml
+      - type: file
+        path: ../build/icon.png
+        dest-filename: icon.png

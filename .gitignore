@@ -1,0 +1,8 @@
+node_modules/
+out/
+dist/
+flatpak/.flatpak-builder/
+flatpak/build-dir/
+flatpak/repo/
+*.cache/
+*.log
