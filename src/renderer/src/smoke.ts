@@ -82,6 +82,14 @@ export async function runSmoke(dir: string, out: string): Promise<void> {
     addTransition(aTrackA.id, undefined, mus, 'fade', 1)
     assert(findClip(p(), mus)!.track.transitions.length === 1, 'audio fade added')
 
+    // Mount the inspector for a clip and for a transition (both once crashed the renderer).
+    useUi.getState().select({ clipIds: [b1] })
+    await sleep(300)
+    useUi.getState().select({ clipIds: [], transitionId: trId })
+    await sleep(300)
+    assert(document.querySelector('.inspector-section'), 'inspector rendered')
+    useUi.getState().clearSelection()
+
     // Undo/redo round-trip.
     const beforeUndo = JSON.stringify(p())
     useProject.getState().undo()

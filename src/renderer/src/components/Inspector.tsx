@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import type { Clip, ClipProp, Easing, Track, TransitionType } from '@shared/types'
 import { AUDIO_PROPS, clipProp, VIDEO_PROPS } from '@shared/interp'
 import { clipEnd, findClip, formatTimecode } from '@shared/timeline'
@@ -204,13 +205,15 @@ function ClipInspector({ clip, track }: { clip: Clip; track: Track }): JSX.Eleme
 }
 
 function TransitionInspector({ id }: { id: string }): JSX.Element | null {
-  const found = useProject((s) => {
-    for (const t of s.project.tracks) {
-      const tr = t.transitions.find((x) => x.id === id)
-      if (tr) return { tr, track: t }
-    }
-    return undefined
-  })
+  const found = useProject(
+    useShallow((s) => {
+      for (const t of s.project.tracks) {
+        const tr = t.transitions.find((x) => x.id === id)
+        if (tr) return { tr, track: t }
+      }
+      return undefined
+    }),
+  )
   if (!found) return null
   const { tr, track } = found
   const types = track.kind === 'audio' ? AUDIO_TRANSITIONS : VIDEO_TRANSITIONS
@@ -314,7 +317,8 @@ function AssetInspector({ assetId }: { assetId: string }): JSX.Element | null {
 
 export default function Inspector(): JSX.Element {
   const selection = useUi((s) => s.selection)
-  const found = useProject((s) => (selection.clipIds[0] ? findClip(s.project, selection.clipIds[0]) : undefined))
+  // useShallow: findClip builds a new wrapper object each call, which would otherwise re-render forever.
+  const found = useProject(useShallow((s) => (selection.clipIds[0] ? findClip(s.project, selection.clipIds[0]) : undefined)))
   return (
     <div className="panel inspector">
       <div className="panel-header">Inspector</div>

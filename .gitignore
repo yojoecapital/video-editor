@@ -6,3 +6,4 @@ flatpak/build-dir/
 flatpak/repo/
 *.cache/
 *.log
+scratch/
