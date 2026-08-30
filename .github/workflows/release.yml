@@ -1,0 +1,70 @@
+# Builds release artefacts when a version tag (v1.2.3) is pushed and attaches
+# them to a GitHub Release:
+#   - Video-Editor-<version>.AppImage   (electron-builder)
+#   - video-editor-<version>.flatpak    (single-file Flatpak bundle)
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Package AppImage + unpacked dir
+        run: npx electron-builder --linux AppImage dir
+        env:
+          # Skip electron-builder's own GitHub publishing; the release step below uploads.
+          GH_TOKEN: ''
+
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 org.electronjs.Electron2.BaseApp//24.08
+
+      - name: Build Flatpak bundle
+        run: |
+          flatpak-builder --user --repo=flatpak/repo --force-clean --disable-rofiles-fuse \
+            flatpak/build-dir flatpak/io.github.yojoe.VideoEditor.yml
+          VERSION="${GITHUB_REF_NAME#v}"
+          flatpak build-bundle flatpak/repo "dist/video-editor-${VERSION}.flatpak" io.github.yojoe.VideoEditor
+
+      - name: Upload artefacts (for workflow_dispatch runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-editor-linux
+          path: |
+            dist/*.AppImage
+            dist/*.flatpak
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.AppImage
+            dist/*.flatpak
