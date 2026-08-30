@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Asset, EncoderInfo, ExportProgress, ExportRequest, LoadedProject, ProbeResult, Project, ProxyInfo } from '@shared/types'
+import type { Asset, EncoderInfo, ExportProgress, ExportRequest, LoadedProject, ProbeResult, Project, ProxyInfo, ProxyOptions } from '@shared/types'
 
 type Unsubscribe = () => void
 function on<T>(channel: string, cb: (payload: T) => void): Unsubscribe {
@@ -48,7 +48,7 @@ const api = {
   media: {
     addAsset: (file: string): Promise<Asset> => ipcRenderer.invoke('media:addAsset', file),
     probe: (file: string): Promise<ProbeResult> => ipcRenderer.invoke('media:probe', file),
-    proxy: (asset: Asset, cacheDir: string): Promise<ProxyInfo> => ipcRenderer.invoke('media:proxy', asset, cacheDir),
+    proxy: (asset: Asset, cacheDir: string, opts: ProxyOptions): Promise<ProxyInfo> => ipcRenderer.invoke('media:proxy', asset, cacheDir, opts),
     onProxyProgress: (cb: (p: { assetId: string; fraction: number }) => void): Unsubscribe => on('proxy:progress', cb),
     searchForFile: (root: string, name: string): Promise<string | undefined> => ipcRenderer.invoke('media:searchForFile', root, name),
     fileExists: (p: string): Promise<boolean> => ipcRenderer.invoke('media:fileExists', p),

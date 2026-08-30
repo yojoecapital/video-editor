@@ -2,7 +2,7 @@ import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { promises as fs, existsSync } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
-import type { Asset, EncoderInfo, ExportSettings, ProbeResult, ProxyInfo, VideoCodec } from '@shared/types'
+import type { Asset, EncoderInfo, ExportSettings, ProbeResult, ProxyInfo, ProxyOptions, VideoCodec } from '@shared/types'
 
 /* ------------------------------ Binary resolution ------------------------------ */
 
@@ -58,6 +58,22 @@ function run(bin: string, args: string[], opts: { maxBuffer?: number; timeout?: 
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff', '.avif', '.heic'])
 
+/** What Chromium's media stack (with Electron's proprietary codecs) plays directly. */
+export const BROWSER_VIDEO_CODECS = new Set(['h264', 'vp8', 'vp9', 'av1', 'theora'])
+export const BROWSER_AUDIO_CODECS = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_f32le', 'alac'])
+export const BROWSER_CONTAINERS = new Set(['.mp4', '.m4v', '.m4a', '.webm', '.mkv', '.mka', '.mov', '.ogv', '.ogg', '.oga', '.opus', '.mp3', '.wav', '.flac', '.aac'])
+export const BROWSER_IMAGES = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif'])
+
+export function browserPlayable(file: string, videoCodec?: string, audioCodec?: string, pixFmt?: string): boolean {
+  const ext = path.extname(file).toLowerCase()
+  if (!BROWSER_CONTAINERS.has(ext)) return false
+  if (videoCodec && !BROWSER_VIDEO_CODECS.has(videoCodec)) return false
+  // 10-bit / 4:2:2 / 4:4:4 H.264 is not decodable by Chromium's software path.
+  if (videoCodec === 'h264' && pixFmt && pixFmt !== 'yuv420p' && pixFmt !== 'yuvj420p') return false
+  if (audioCodec && !BROWSER_AUDIO_CODECS.has(audioCodec)) return false
+  return true
+}
+
 function parseFps(r: string | undefined): number {
   if (!r) return 0
   const [n, d] = r.split('/').map(Number)
@@ -86,6 +102,7 @@ export async function probe(file: string): Promise<ProbeResult> {
   if (isImage) {
     return {
       kind: 'image',
+      browserPlayable: BROWSER_IMAGES.has(ext),
       duration: 5,
       width: v?.width ?? 0,
       height: v?.height ?? 0,
@@ -98,6 +115,7 @@ export async function probe(file: string): Promise<ProbeResult> {
   if (v) {
     return {
       kind: 'video',
+      browserPlayable: browserPlayable(file, v.codec_name, a?.codec_name, v.pix_fmt),
       duration,
       width: v.width ?? 0,
       height: v.height ?? 0,
@@ -112,6 +130,7 @@ export async function probe(file: string): Promise<ProbeResult> {
   if (a) {
     return {
       kind: 'audio',
+      browserPlayable: browserPlayable(file, undefined, a.codec_name),
       duration,
       width: 0,
       height: 0,
@@ -128,7 +147,6 @@ export async function probe(file: string): Promise<ProbeResult> {
 
 /* ---------------------------------- Proxies ---------------------------------- */
 
-export const PROXY_MAX_WIDTH = 960
 
 async function isFresh(target: string, source: string): Promise<boolean> {
   try {
@@ -139,45 +157,62 @@ async function isFresh(target: string, source: string): Promise<boolean> {
   }
 }
 
-function proxySize(w: number, h: number): { width: number; height: number } {
-  if (w <= PROXY_MAX_WIDTH) return { width: w - (w % 2), height: h - (h % 2) }
-  const scale = PROXY_MAX_WIDTH / w
-  const width = PROXY_MAX_WIDTH
+function proxySize(w: number, h: number, maxWidth: number): { width: number; height: number } {
+  if (w <= maxWidth) return { width: w - (w % 2), height: h - (h % 2) }
+  const scale = maxWidth / w
+  const width = maxWidth
   const height = Math.round((h * scale) / 2) * 2
   return { width, height }
 }
 
 /**
- * Build the preview proxy + thumbnail for an asset. Proxies are low-res,
- * all-intra-ish H.264 so the renderer can seek instantly; export always goes
- * back to the original file.
+ * Build the preview proxy + thumbnail for an asset. Proxies are reduced-size
+ * H.264 with a short GOP so the renderer can seek instantly; export always
+ * goes back to the original file. Depending on `opts.mode` the original may
+ * be used directly when Chromium can play it.
  */
 export async function generateProxy(
   asset: Asset,
   cacheDir: string,
+  opts: ProxyOptions,
   onProgress?: (fraction: number) => void,
 ): Promise<ProxyInfo> {
   const dir = path.join(cacheDir, 'proxies')
   await fs.mkdir(dir, { recursive: true })
   const thumb = path.join(dir, `${asset.id}.jpg`)
+  const maxWidth = Math.max(64, Math.round(opts.maxWidth / 2) * 2)
 
   if (asset.kind === 'image') {
     const out = path.join(dir, `${asset.id}.png`)
-    const { width, height } = proxySize(asset.width, asset.height)
+    const { width, height } = proxySize(asset.width, asset.height, maxWidth)
+    const playable = BROWSER_IMAGES.has(path.extname(asset.path).toLowerCase())
     const big = asset.width > 2048 || asset.height > 2048
-    if (!(await isFresh(out, asset.path))) {
-      if (big) {
-        await run(ffmpegPath, ['-y', '-v', 'error', '-i', asset.path, '-vf', 'scale=min(2048\\,iw):-2', out])
-      }
+    const convert = !playable || (big && opts.mode !== 'never')
+    if (convert && !(await isFresh(out, asset.path))) {
+      await run(ffmpegPath, ['-y', '-v', 'error', '-i', asset.path, '-vf', 'scale=min(2048\\,iw):-2', out])
     }
     if (!(await isFresh(thumb, asset.path))) {
       await run(ffmpegPath, ['-y', '-v', 'error', '-i', asset.path, '-vf', 'scale=160:-2', '-frames:v', '1', thumb])
     }
     onProgress?.(1)
-    return { path: big ? out : asset.path, thumbnail: thumb, width, height }
+    return { path: convert ? out : asset.path, thumbnail: thumb, width, height }
   }
 
+  // Decide whether the original can be used as-is.
+  let playable = false
+  try {
+    playable = (await probe(asset.path)).browserPlayable
+  } catch {
+    playable = false
+  }
+  const wantProxy = opts.mode === 'always' || (opts.mode === 'auto' && asset.width > maxWidth)
+  const useOriginal = playable && !wantProxy
+
   if (asset.kind === 'audio') {
+    if (useOriginal) {
+      onProgress?.(1)
+      return { path: asset.path, audioPath: asset.path, width: 0, height: 0 }
+    }
     const out = path.join(dir, `${asset.id}.m4a`)
     if (!(await isFresh(out, asset.path))) {
       await runWithProgress(
@@ -189,8 +224,19 @@ export async function generateProxy(
     return { path: out, audioPath: out, width: 0, height: 0 }
   }
 
-  const out = path.join(dir, `${asset.id}.mp4`)
-  const { width, height } = proxySize(asset.width, asset.height)
+  if (!(await isFresh(thumb, asset.path))) {
+    const at = Math.min(1, asset.duration * 0.1)
+    await run(ffmpegPath, ['-y', '-v', 'error', '-ss', String(at), '-i', asset.path, '-vf', 'scale=160:-2', '-frames:v', '1', thumb]).catch(
+      () => undefined,
+    )
+  }
+  if (useOriginal) {
+    onProgress?.(1)
+    return { path: asset.path, audioPath: asset.hasAudio ? asset.path : undefined, thumbnail: existsSync(thumb) ? thumb : undefined, width: asset.width, height: asset.height }
+  }
+
+  const { width, height } = proxySize(asset.width, asset.height, maxWidth)
+  const out = path.join(dir, `${asset.id}_${width}.mp4`)
   if (!(await isFresh(out, asset.path))) {
     const args = [
       '-y',
@@ -219,12 +265,6 @@ export async function generateProxy(
     else args.push('-an')
     args.push(out)
     await runWithProgress(args, asset.duration, onProgress)
-  }
-  if (!(await isFresh(thumb, asset.path))) {
-    const at = Math.min(1, asset.duration * 0.1)
-    await run(ffmpegPath, ['-y', '-v', 'error', '-ss', String(at), '-i', asset.path, '-vf', 'scale=160:-2', '-frames:v', '1', thumb]).catch(
-      () => undefined,
-    )
   }
   let audioPath: string | undefined
   if (asset.hasAudio) {

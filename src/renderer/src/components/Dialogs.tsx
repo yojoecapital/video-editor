@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { AudioCodec, Container, EncoderInfo, ExportProgress, VideoCodec } from '@shared/types'
+import type { AudioCodec, Container, EncoderInfo, ExportProgress, ProxyMode, VideoCodec } from '@shared/types'
 import { projectDuration } from '@shared/timeline'
 import { useProject } from '../store/project'
 import { useUi } from '../store/ui'
 import { relinkAsset } from '../actions'
 import { media } from '../engine/session'
-import { loadIntoEditor, prepareAllMedia } from '../lifecycle'
+import { loadIntoEditor, prepareAllMedia, proxyOptions } from '../lifecycle'
 
 function Modal({ title, children, actions }: { title: string; children: React.ReactNode; actions: React.ReactNode }): JSX.Element {
   return (
@@ -34,15 +34,18 @@ export function SettingsDialog(): JSX.Element {
   const [draft, setDraft] = useState({ ...settings })
   const close = useUi((s) => s.closeDialog)
   const apply = (): void => {
+    const proxyChanged = draft.proxyMode !== settings.proxyMode || draft.proxyMaxWidth !== settings.proxyMaxWidth
     useProject.getState().update((p) => {
       p.settings = {
         ...draft,
         width: Math.max(16, Math.round(draft.width / 2) * 2),
         height: Math.max(16, Math.round(draft.height / 2) * 2),
         fps: Math.max(1, draft.fps),
+        proxyMaxWidth: Math.max(160, Math.round(draft.proxyMaxWidth / 2) * 2),
       }
     })
     close()
+    if (proxyChanged) void prepareAllMedia(true)
   }
   return (
     <Modal
@@ -99,6 +102,26 @@ export function SettingsDialog(): JSX.Element {
         <label>Background</label>
         <input type="text" value={draft.background} onChange={(e) => setDraft({ ...draft, background: e.target.value })} />
       </div>
+      <h3 style={{ fontSize: 12, color: 'var(--text-dim)', margin: '12px 0 8px' }}>Preview proxies</h3>
+      <div className="field">
+        <label>Mode</label>
+        <select value={draft.proxyMode} onChange={(e) => setDraft({ ...draft, proxyMode: e.target.value as ProxyMode })}>
+          <option value="auto">Auto — only for sources wider than the proxy size</option>
+          <option value="always">Always — transcode every source</option>
+          <option value="never">Never — play originals (transcode only what the app can't decode)</option>
+        </select>
+      </div>
+      <div className="field">
+        <label>Proxy width</label>
+        <select value={draft.proxyMaxWidth} onChange={(e) => setDraft({ ...draft, proxyMaxWidth: Number(e.target.value) })}>
+          {[480, 640, 960, 1280, 1920, 2560].map((w) => (
+            <option key={w} value={w}>
+              {w} px{w === 960 ? ' (default)' : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="hint">Proxies are stored next to the project in its .cache folder. Changing these settings regenerates them.</p>
     </Modal>
   )
 }
@@ -282,7 +305,7 @@ export function RelinkDialog({ missing }: { missing: Array<{ assetId: string; na
       const probe = await window.api.media.probe(path)
       relinkAsset(assetId, path, probe)
       const a = useProject.getState().project.assets.find((x) => x.id === assetId)
-      if (a) void media.prepare(a, useProject.getState().cacheDir)
+      if (a) void media.prepare(a, useProject.getState().cacheDir, proxyOptions())
       setRemaining((r) => r.filter((m) => m.assetId !== assetId))
       return true
     } catch (err) {

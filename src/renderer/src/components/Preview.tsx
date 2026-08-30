@@ -11,6 +11,8 @@ export default function Preview(): JSX.Element {
   const settings = useProject((s) => s.project.settings)
   const duration = useProject((s) => projectDuration(s.project))
   const [cacheInfo, setCacheInfo] = useState('')
+  /** Last playhead value the player itself reported; changes matching it are not user seeks. */
+  const emitted = useRef<number | null>(null)
 
   // Mount the compositor + player on the canvas.
   useEffect(() => {
@@ -25,6 +27,7 @@ export default function Preview(): JSX.Element {
     }
     const offTime = player.onTime((t, p) => {
       const ui = useUi.getState()
+      emitted.current = Math.max(0, t)
       if (ui.playhead !== t) ui.setPlayhead(t)
       if (ui.playing !== p) useUi.setState({ playing: p })
     })
@@ -53,10 +56,11 @@ export default function Preview(): JSX.Element {
     }
   }, [])
 
-  // Playhead moved from the timeline/keyboard: seek the player.
+  // Playhead moved from the timeline/keyboard (not by the player itself): seek.
   useEffect(() => {
     const pl = getPlayer()
     if (!pl) return
+    if (emitted.current !== null && Math.abs(emitted.current - playhead) < 1e-9) return
     if (Math.abs(pl.time - playhead) > 1e-6) pl.seek(playhead)
   }, [playhead])
 

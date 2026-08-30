@@ -14,6 +14,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   fps: 30,
   sampleRate: 48000,
   background: '#000000',
+  proxyMode: 'auto',
+  proxyMaxWidth: 960,
 }
 
 export const DEFAULT_EXPORT: ExportSettings = {

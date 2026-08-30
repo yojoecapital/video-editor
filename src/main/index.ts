@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstruc
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import type { Asset, ExportProgress, ExportRequest, Project } from '@shared/types'
+import type { Asset, ExportProgress, ExportRequest, Project, ProxyOptions } from '@shared/types'
 import { newId } from '@shared/schema'
 import { generateProxy, listEncoders, probe, resolveBinaries } from './ffmpeg'
 import { installMediaProtocol, registerMediaScheme } from './protocol'
@@ -64,7 +64,7 @@ function createWindow(): BrowserWindow {
   })
   // VE_SMOKE_DIR=<dir with media> VE_SMOKE_OUT=<file> runs the scripted end-to-end
   // scenario in the renderer (see renderer/src/smoke.ts) and exits with a status code.
-  const smoke = process.env.VE_SMOKE_DIR
+  const smoke = process.env.VE_SMOKE_DIR ?? (process.env.VE_SMOKE_FILE ? path.dirname(process.env.VE_SMOKE_FILE) : undefined)
   if (smoke) {
     win.webContents.on('console-message', (_e, _level, message) => console.log(`[renderer] ${message}`))
     ipcMain.handle('smoke:done', async (_e, ok: boolean, message: string) => {
@@ -78,7 +78,11 @@ function createWindow(): BrowserWindow {
       setTimeout(() => app.exit(ok ? 0 : 1), 200)
     })
   }
-  const query = smoke ? { smokeDir: smoke, smokeOut: process.env.VE_SMOKE_OUT ?? '' } : undefined
+  const query: Record<string, string> | undefined = process.env.VE_SMOKE_FILE
+    ? { smokeFile: process.env.VE_SMOKE_FILE }
+    : smoke
+      ? { smokeDir: smoke, smokeOut: process.env.VE_SMOKE_OUT ?? '' }
+      : undefined
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const u = new URL(process.env['ELECTRON_RENDERER_URL'])
     if (query) for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v)
@@ -244,8 +248,8 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle('media:probe', (_e, file: string) => probe(file))
-  ipcMain.handle('media:proxy', (e, asset: Asset, cacheDir: string) =>
-    generateProxy(asset, cacheDir, (fraction) => {
+  ipcMain.handle('media:proxy', (e, asset: Asset, cacheDir: string, opts: ProxyOptions) =>
+    generateProxy(asset, cacheDir, opts, (fraction) => {
       if (!e.sender.isDestroyed()) e.sender.send('proxy:progress', { assetId: asset.id, fraction })
     }),
   )

@@ -20,6 +20,7 @@ import {
 } from '../actions'
 import { relinkAsset } from '../actions'
 import { media } from '../engine/session'
+import { proxyOptions } from '../lifecycle'
 
 const PROP_META: Record<ClipProp, { label: string; min: number; max: number; step: number; unit?: string }> = {
   opacity: { label: 'Opacity', min: 0, max: 1, step: 0.01 },
@@ -278,7 +279,7 @@ function AssetInspector({ assetId }: { assetId: string }): JSX.Element | null {
       const probe = await window.api.media.probe(p)
       relinkAsset(asset.id, p, probe)
       const a = useProject.getState().project.assets.find((x) => x.id === asset.id)!
-      await media.prepare(a, useProject.getState().cacheDir)
+      await media.prepare(a, useProject.getState().cacheDir, proxyOptions())
     } catch (err) {
       await window.api.dialogs.error('Relink failed', (err as Error).message)
     }

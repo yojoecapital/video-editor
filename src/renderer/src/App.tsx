@@ -121,6 +121,12 @@ export default function App(): JSX.Element {
       const cacheDir = await window.api.project.scratchCacheDir()
       useProject.getState().setCacheDir(cacheDir)
       const params = new URLSearchParams(location.search)
+      const smokeFile = params.get('smokeFile')
+      if (smokeFile) {
+        const { runPreviewCheck } = await import('./smoke')
+        setTimeout(() => void runPreviewCheck(smokeFile), 500)
+        return
+      }
       const smokeDir = params.get('smokeDir')
       if (smokeDir) {
         const { runSmoke } = await import('./smoke')

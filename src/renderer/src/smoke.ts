@@ -106,11 +106,44 @@ export async function runSmoke(dir: string, out: string): Promise<void> {
       await player.renderAt(t)
     }
     assert(player.cache.size >= 1, 'frame cache populated')
-    // Short playback.
+    // Playback: the clock, the video decoders and the canvas must all advance.
+    const canvasHash = (): string => {
+      const c = document.createElement('canvas')
+      c.width = 64
+      c.height = 36
+      const g = c.getContext('2d')!
+      g.drawImage(player.comp.canvas as HTMLCanvasElement, 0, 0, 64, 36)
+      const d = g.getImageData(0, 0, 64, 36).data
+      let h = 0
+      for (let i = 0; i < d.length; i += 4) h = (h * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7) >>> 0
+      return h.toString(16)
+    }
     await player.play(0)
-    await sleep(1200)
+    await sleep(700)
+    const d1 = player.debug()
+    const h1 = canvasHash()
+    await sleep(900)
+    const d2 = player.debug()
+    const h2 = canvasHash()
     player.pause()
-    assert(player.time > 0.5, `playback advanced (${player.time.toFixed(2)}s)`)
+    log(`playback: t ${d1.time.toFixed(2)}→${d2.time.toFixed(2)} ticks ${d1.ticks}→${d2.ticks} perf(ms)=${JSON.stringify({ sync: +d2.perf.sync.toFixed(1), emit: +d2.perf.emit.toFixed(1), render: +d2.perf.render.toFixed(1) })} audio=${d2.audioState} nodes=${d2.liveNodes} videos=${JSON.stringify(d2.videos.map((v) => [v.clipId, v.currentTime.toFixed(2), v.paused]))}`)
+    assert(d2.time > d1.time + 0.5, 'clock advanced')
+    const v1 = d1.videos.find((v) => v.clipId === a1)!
+    const v2 = d2.videos.find((v) => v.clipId === a1)!
+    assert(v2.currentTime > v1.currentTime + 0.3, `video element advanced (${v1.currentTime.toFixed(2)}→${v2.currentTime.toFixed(2)})`)
+    assert(h1 !== h2, 'canvas content changed during playback')
+    assert(player.debug().liveNodes === 0, 'audio nodes stopped on pause')
+    // Rapid seek-while-playing must not leak audio nodes.
+    await player.play(0)
+    for (let i = 0; i < 5; i++) {
+      player.seek(0.2 * i)
+      await sleep(30)
+    }
+    await sleep(600)
+    const leak = player.debug()
+    player.pause()
+    assert(leak.liveNodes <= 3, `no duplicate audio after seeks (${leak.liveNodes} nodes)`)
+    assert(player.debug().liveNodes === 0, 'audio stopped after final pause')
 
     // Save YAML + reload.
     const projPath = `${dir}/smoke-project.yaml`
@@ -135,7 +168,86 @@ export async function runSmoke(dir: string, out: string): Promise<void> {
     assert(probe.hasVideo && probe.hasAudio, 'export has audio+video')
     assert(Math.abs(probe.duration - dur) < 0.25, `export duration ${probe.duration.toFixed(2)} ≈ ${dur.toFixed(2)}`)
     assert(probe.width === p().settings.width, 'export width')
+    player.cache.invalidate(-2)
+    useUi.getState().setPlayhead(0.5)
+    await player.renderAt(0.5)
+    await sleep(200)
     await window.api.smokeDone(true, `exported ${probe.width}x${probe.height} ${probe.duration.toFixed(2)}s`)
+  } catch (err) {
+    console.error(err)
+    await window.api.smokeDone(false, (err as Error).stack ?? String(err))
+  }
+}
+
+/** Preview-only check against one real-world file: import, place, play, seek, step. */
+export async function runPreviewCheck(file: string): Promise<void> {
+  if (started) return
+  started = true
+  const log = (m: string): void => console.log(`preview-check: ${m}`)
+  try {
+    const t0 = performance.now()
+    const [asset] = await importFiles([file])
+    assert(asset, 'imported')
+    log(`imported ${asset.name} (${asset.duration.toFixed(1)}s), generating proxy…`)
+    await prepareAllMedia()
+    assert(media.hasSource(asset.id), 'proxy ready')
+    log(`proxy ready in ${((performance.now() - t0) / 1000).toFixed(1)}s`)
+    const ids = insertAsset(asset.id, undefined, 0)
+    useUi.getState().select({ clipIds: ids })
+    const player = getPlayer()
+    assert(player, 'player')
+    await sleep(300)
+    assert(document.querySelector('.inspector-section'), 'inspector rendered')
+
+    const tPlay = performance.now()
+    await player.play(0)
+    await sleep(600)
+    const d1 = player.debug()
+    await sleep(1500)
+    const d2 = player.debug()
+    log(`play: t ${d1.time.toFixed(2)}→${d2.time.toFixed(2)} ticks ${d1.ticks}→${d2.ticks} perf=${JSON.stringify(d2.perf)} audio=${d2.audioState} playingAudio=${d2.liveNodes} video=${JSON.stringify(d2.videos)} audios=${JSON.stringify(d2.audios)} (${((performance.now() - tPlay) / 1000).toFixed(1)}s)`)
+    assert(d2.time > d1.time + 1, 'clock advanced')
+    assert(d2.videos[0] && d2.videos[0].currentTime > d1.videos[0].currentTime + 0.8, 'video advanced')
+    assert(d2.audios[0] && !d2.audios[0].paused && d2.audios[0].currentTime > 0.5, 'audio element playing')
+    assert(Math.abs(d2.audios[0].currentTime - d2.time) < 0.3, `audio in sync (${d2.audios[0].currentTime.toFixed(2)} vs ${d2.time.toFixed(2)})`)
+    assert(Math.abs(d2.videos[0].currentTime - d2.time) < 0.3, `video in sync (${d2.videos[0].currentTime.toFixed(2)} vs ${d2.time.toFixed(2)})`)
+
+    // Seek far while playing (deep into a long file).
+    const far = Math.min(asset.duration - 5, 600)
+    player.seek(far)
+    await sleep(1500)
+    const d3 = player.debug()
+    log(`after seek to ${far}: t=${d3.time.toFixed(2)} video=${JSON.stringify(d3.videos)} audio=${JSON.stringify(d3.audios)}`)
+    {
+      const src = media.sources.get(asset.id)!
+      const r = await fetch(src.videoUrl!, { headers: { Range: 'bytes=1000-1999' } })
+      log(`range fetch: status=${r.status} content-range=${r.headers.get('content-range')} length=${(await r.arrayBuffer()).byteLength} accept-ranges=${r.headers.get('accept-ranges')}`)
+    }
+    assert(d3.playing && d3.time > far + 0.5, 'still playing after seek')
+    assert(Math.abs(d3.videos[0].currentTime - d3.time) < 0.5, 'video resynced after seek')
+    assert(Math.abs(d3.audios[0].currentTime - d3.time) < 0.5, 'audio resynced after seek')
+
+    player.pause()
+    await sleep(200)
+    const d4 = player.debug()
+    assert(d4.audios.every((a) => a.paused) && d4.videos.every((v) => v.paused), 'everything paused')
+    assert(d4.liveNodes === 0, 'no audio playing after pause')
+
+    // Frame stepping while paused.
+    const fps = useProject.getState().project.settings.fps
+    const step0 = d4.time
+    for (let i = 1; i <= 5; i++) {
+      useUi.getState().setPlayhead(step0 + i / fps)
+      await player.renderAt(step0 + i / fps)
+    }
+    assert(player.cache.size >= 5, `stepped frames cached (${player.cache.size})`)
+    // Toggle twice quickly, must end paused with silence.
+    player.toggle()
+    await sleep(100)
+    player.toggle()
+    await sleep(300)
+    assert(!player.playing && player.debug().liveNodes === 0, 'quick toggle leaves silence')
+    await window.api.smokeDone(true, `preview OK for ${asset.name}`)
   } catch (err) {
     console.error(err)
     await window.api.smokeDone(false, (err as Error).stack ?? String(err))

@@ -4,10 +4,6 @@ import { execFile } from 'node:child_process'
 import type { Asset } from '@shared/types'
 import { probe, resolveBinaries } from './ffmpeg'
 
-/** Codecs Chromium's <video> can decode directly on Linux builds of Electron. */
-const BROWSER_DECODABLE = new Set(['h264', 'vp8', 'vp9', 'av1', 'theora', 'mjpeg', 'png', 'gif', 'webp'])
-const BROWSER_CONTAINERS = new Set(['.mp4', '.m4v', '.webm', '.mkv', '.mov', '.ogv', '.ogg'])
-
 /**
  * The export renderer decodes originals through <video>. Anything Chromium
  * can't play (ProRes, DNxHD, HEVC on most Linux boxes, MPEG-2, AVI/MTS wrappers)
@@ -16,8 +12,7 @@ const BROWSER_CONTAINERS = new Set(['.mp4', '.m4v', '.webm', '.mkv', '.mov', '.o
 export async function ensureDecodable(asset: Asset, cacheDir: string): Promise<string> {
   if (asset.kind === 'image') return asset.path
   const info = await probe(asset.path)
-  const ext = path.extname(asset.path).toLowerCase()
-  if (info.codec && BROWSER_DECODABLE.has(info.codec) && BROWSER_CONTAINERS.has(ext)) return asset.path
+  if (info.browserPlayable) return asset.path
 
   const dir = path.join(cacheDir, 'mezzanine')
   await fs.mkdir(dir, { recursive: true })

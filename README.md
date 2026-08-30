@@ -69,9 +69,16 @@ src/renderer   React UI + engine:
 ### Media pipeline
 
 * `ffprobe` classifies each import (video / audio / image).
-* Proxies live in `<project>.cache/proxies/`: ≤960 px wide H.264 with a short
-  GOP for instant seeking, plus a separate AAC file for Web Audio and a JPEG
-  thumbnail. Images larger than 2048 px are downscaled.
+* Proxies live in `<project>.cache/proxies/`: H.264 at the configured width
+  (default 960 px) with a short GOP for instant seeking, a separate AAC file
+  for audio, and a JPEG thumbnail. Images larger than 2048 px are downscaled.
+* **Project Settings → Preview proxies** controls when they are built:
+  *Auto* (default) only transcodes sources wider than the proxy width or that
+  Chromium cannot decode; *Always* transcodes everything; *Never* plays the
+  originals directly and only transcodes what the app can't decode (ProRes,
+  10‑bit H.264, HEVC, …). The proxy width can be raised to 1280/1920/2560 for
+  a sharper preview at the cost of decode load. Changing either regenerates
+  the proxies.
 * Export decodes originals through Chromium's `<video>`; sources it cannot
   play (ProRes, DNxHD, HEVC on most Linux builds, MPEG-2, odd containers) are
   transcoded once to a high-quality H.264 mezzanine in `<project>.cache/mezzanine/`.
@@ -84,9 +91,11 @@ src/renderer   React UI + engine:
   to offscreen targets and blend in a single pass.
 * A frame cache (LRU of composited `ImageBitmap`s) serves scrubbing and
   frame-stepping; while idle, the next 30 frames are prefetched.
-* Each timeline clip gets its own `<video>` element so cuts and transitions can
-  pre-roll independently; during playback they are kept in lock-step with the
-  `AudioContext` clock.
+* Each timeline clip gets its own `<video>` (and `<audio>`) element so cuts and
+  transitions can pre-roll independently; during playback they are kept in
+  lock-step with a `performance.now()` master clock, and audio is routed
+  through per-clip `GainNode`s for keyframed volume and transitions. Long
+  sources stream — nothing is decoded up front.
 
 ### Project file
 

@@ -111,12 +111,26 @@ export interface Marker {
   color: string
 }
 
+export type ProxyMode = 'auto' | 'always' | 'never'
+
 export interface ProjectSettings {
   width: number
   height: number
   fps: number
   sampleRate: number
   background: string
+  /**
+   * auto: build proxies only for sources wider than proxyMaxWidth or that
+   * Chromium cannot decode; always: every source; never: only undecodable ones.
+   */
+  proxyMode: ProxyMode
+  /** Proxy width in pixels (height keeps the aspect ratio). */
+  proxyMaxWidth: number
+}
+
+export interface ProxyOptions {
+  mode: ProxyMode
+  maxWidth: number
 }
 
 export type Container = 'mp4' | 'mkv' | 'mov' | 'webm'
@@ -160,6 +174,8 @@ export interface Project {
 
 export interface ProbeResult {
   kind: AssetKind
+  /** True when Chromium's <video>/<audio> can play the file directly. */
+  browserPlayable: boolean
   duration: number
   width: number
   height: number

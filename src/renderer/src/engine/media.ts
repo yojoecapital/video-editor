@@ -1,4 +1,4 @@
-import type { Asset } from '@shared/types'
+import type { Asset, ProxyOptions } from '@shared/types'
 
 export interface MediaSource {
   videoUrl?: string
@@ -18,6 +18,7 @@ export interface MediaSource {
 export class MediaManager {
   readonly sources = new Map<string, MediaSource>()
   private videos = new Map<string, HTMLVideoElement>()
+  private audios = new Map<string, HTMLAudioElement>()
   private images = new Map<string, Promise<ImageBitmap>>()
   private audio = new Map<string, Promise<AudioBuffer>>()
   private pending = new Map<string, Promise<MediaSource>>()
@@ -41,6 +42,12 @@ export class MediaManager {
         this.videos.delete(clipId)
       }
     }
+    for (const [clipId, a] of this.audios) {
+      if (a.dataset.assetId === assetId) {
+        a.src = ''
+        this.audios.delete(clipId)
+      }
+    }
     this.emit()
   }
 
@@ -49,11 +56,11 @@ export class MediaManager {
   }
 
   /** Generate (or reuse) proxies for an asset and register them. */
-  prepare(asset: Asset, cacheDir: string): Promise<MediaSource> {
+  prepare(asset: Asset, cacheDir: string, opts: ProxyOptions): Promise<MediaSource> {
     const existing = this.pending.get(asset.id)
     if (existing) return existing
     const p = window.api.media
-      .proxy(asset, cacheDir)
+      .proxy(asset, cacheDir, opts)
       .then((info) => {
         const url = window.api.media.url
         const src: MediaSource = {
@@ -90,6 +97,23 @@ export class MediaManager {
     return v
   }
 
+  /** Streaming audio element for live playback (export uses decoded buffers instead). */
+  audioElement(clipId: string, assetId: string): HTMLAudioElement | undefined {
+    const src = this.sources.get(assetId)
+    if (!src?.audioUrl) return undefined
+    let a = this.audios.get(clipId)
+    if (!a) {
+      a = document.createElement('audio')
+      a.crossOrigin = 'anonymous'
+      a.preload = 'auto'
+      a.dataset.assetId = assetId
+      a.src = src.audioUrl
+      a.load()
+      this.audios.set(clipId, a)
+    }
+    return a
+  }
+
   releaseClip(clipId: string): void {
     const v = this.videos.get(clipId)
     if (v) {
@@ -98,11 +122,19 @@ export class MediaManager {
       v.load()
       this.videos.delete(clipId)
     }
+    const a = this.audios.get(clipId)
+    if (a) {
+      a.pause()
+      a.removeAttribute('src')
+      a.load()
+      this.audios.delete(clipId)
+    }
   }
 
-  /** Drop video elements for clips that no longer exist. */
+  /** Drop media elements for clips that no longer exist. */
   retain(clipIds: Set<string>): void {
     for (const id of [...this.videos.keys()]) if (!clipIds.has(id)) this.releaseClip(id)
+    for (const id of [...this.audios.keys()]) if (!clipIds.has(id)) this.releaseClip(id)
   }
 
   image(assetId: string): Promise<ImageBitmap> | undefined {
@@ -133,6 +165,19 @@ export class MediaManager {
 
   pauseAll(): void {
     for (const v of this.videos.values()) if (!v.paused) v.pause()
+    for (const a of this.audios.values()) if (!a.paused) a.pause()
+  }
+
+  pauseAudioExcept(clipIds: Set<string>): void {
+    for (const [id, a] of this.audios) if (!clipIds.has(id) && !a.paused) a.pause()
+  }
+
+  debugAudios(): Array<{ clipId: string; currentTime: number; paused: boolean; readyState: number }> {
+    return [...this.audios].map(([clipId, a]) => ({ clipId, currentTime: a.currentTime, paused: a.paused, readyState: a.readyState }))
+  }
+
+  debugVideos(): Array<{ clipId: string; currentTime: number; paused: boolean; readyState: number; seeking: boolean }> {
+    return [...this.videos].map(([clipId, v]) => ({ clipId, currentTime: v.currentTime, paused: v.paused, readyState: v.readyState, seeking: v.seeking }))
   }
 
   pauseExcept(clipIds: Set<string>): void {
@@ -140,7 +185,7 @@ export class MediaManager {
   }
 
   dispose(): void {
-    for (const id of [...this.videos.keys()]) this.releaseClip(id)
+    for (const id of [...this.videos.keys(), ...this.audios.keys()]) this.releaseClip(id)
     this.images.clear()
     this.audio.clear()
   }

@@ -259,7 +259,8 @@ export class Compositor {
       this.texPool.set(key, tex)
     }
     gl.bindTexture(gl.TEXTURE_2D, tex)
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    // Row 0 of the upload is the image top; the layer quad maps v=0 to the screen top.
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
     return tex
   }
@@ -350,14 +351,14 @@ export class Compositor {
     gl.viewport(0, 0, this.width, this.height)
     gl.disable(gl.BLEND)
     gl.bindTexture(gl.TEXTURE_2D, this.bitmapTex)
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
     gl.useProgram(this.blitProg)
     gl.bindVertexArray(this.quad)
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.bitmapTex)
     gl.uniform1i(this.loc['blit.u_a'], 0)
-    gl.uniform1f(this.loc['blit.u_flip'], 0)
+    gl.uniform1f(this.loc['blit.u_flip'], 1) // upright bitmap, but the blit quad's v=0 is the screen bottom
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     gl.enable(gl.BLEND)
   }

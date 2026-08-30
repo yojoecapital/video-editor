@@ -14,6 +14,11 @@ export function cacheDirFor(projectPath: string): string {
   return `${dir}${base}.cache`
 }
 
+export function proxyOptions(): import('@shared/types').ProxyOptions {
+  const { proxyMode, proxyMaxWidth } = useProject.getState().project.settings
+  return { mode: proxyMode, maxWidth: proxyMaxWidth }
+}
+
 export function updateTitle(): void {
   const { project, dirty, path } = useProject.getState()
   const name = path ? path.split('/').pop() : project.name
@@ -34,7 +39,7 @@ export async function prepareAllMedia(force = false): Promise<void> {
     while (queue.length) {
       const a = queue.shift()!
       try {
-        await media.prepare(a, cacheDir)
+        await media.prepare(a, cacheDir, proxyOptions())
       } catch (err) {
         failures++
         console.error('proxy failed', a.name, err)
