@@ -32,10 +32,8 @@ jobs:
           npm run build
 
       - name: Package AppImage + unpacked dir
-        run: npx electron-builder --linux AppImage dir
-        env:
-          # Skip electron-builder's own GitHub publishing; the release step below uploads.
-          GH_TOKEN: ''
+        # --publish never: the release step below uploads; electron-builder must not try to.
+        run: npx electron-builder --linux AppImage dir --publish never
 
       - name: Install flatpak-builder
         run: |
